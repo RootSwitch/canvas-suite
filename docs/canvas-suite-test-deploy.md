@@ -290,11 +290,17 @@ ports are unchanged except PingCanvas, which moves to **8443** (8080 stays HTTP)
 
 ### First-run checklist
 
-1. **Visit SNMPCanvas, SyslogCanvas, AlertCanvas, and LaunchCanvas
-   immediately** and set their admin
-   passwords. Both offer a first-run setup page, and whoever reaches it first
-   owns the instance - claim it before something else on your LAN does (or
-   pre-set `ADMIN_PASSWORD` in the compose files and skip the race).
+1. **Claim the logins.** What this takes depends on how you installed:
+   - **Via `canvas-suite-setup.sh`:** nothing to race. The script seeds the
+     portal's `admin` account and prints the password once - log in with it,
+     then change it from Settings. The three Node siblings accept that login
+     over SSO, and while `SUITE_SECRET` is set they refuse first-run setup
+     from anyone not already signed in at the portal, so an unclaimed
+     sibling cannot be taken by a passer-by.
+   - **Built by hand (the walkthrough above):** each app's first-run setup
+     page belongs to whoever reaches it first, so claim them immediately
+     after `up -d`, or pre-set `ADMIN_PASSWORD` in each compose file and
+     skip the race entirely.
 2. **Draw a board.** Open the editor, draw a few devices (or File -> Load
    Sample), and give each one an `IP-Address` in Device Details - that field
    is the monitoring opt-in. Title the diagram "board", Save, then copy the
@@ -398,7 +404,7 @@ running Ubuntu would do this better" - that's the intended outcome.
 
 | Service | URL | First visit |
 |---|---|---|
-| LaunchCanvas portal | `http://<ip>:9160` | **start here** - create the first account; the tiles and Quickstart do the rest |
+| LaunchCanvas portal | `http://<ip>:9160` | **start here** - log in as `admin` with the password the setup script printed (hand-built installs create the first account here instead); the tiles and Quickstart do the rest |
 | CrossCanvas editor | `http://<ip>:8080/index.html` | draw a board, add IP-Address fields |
 | PingCanvas kiosk | `http://<ip>:8080/kiosk.html` | shows a getting-started page until a board exists |
 | Kiosk, fully wired | `http://<ip>:8080/kiosk.html?board=data/board.xcanvas&status=data/status.json&snmp=data/snmp-status.json` | the wall |
