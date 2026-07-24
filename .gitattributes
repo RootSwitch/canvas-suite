@@ -1,0 +1,4 @@
+# The scripts are executed by bash on Linux - a CRLF checkout breaks them
+# with cryptic '\r: command not found' errors. Force LF everywhere.
+*.sh text eol=lf
+*.md text eol=lf
