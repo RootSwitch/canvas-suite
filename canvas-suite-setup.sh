@@ -307,6 +307,21 @@ if [ -f "$LAUNCH_OVR" ]; then
 fi
 [ -n "$SUITE_SECRET" ] || SUITE_SECRET="$(openssl rand -base64 32)"
 
+# The portal's first account. Without this, LaunchCanvas boots UNCLAIMED and the
+# first person to reach :9160 becomes suite root - and because SSO carries that
+# login into every sibling, "whoever gets there first" decides who owns the whole
+# install. Seeding locks the door from the first boot. Idempotent like the
+# secrets above, and harmless if it ever changes: it only seeds the account when
+# none exists yet.
+LAUNCH_PW=""; LAUNCH_PW_IS_NEW=0
+if [ -f "$LAUNCH_OVR" ]; then
+    LAUNCH_PW="$(sed -n 's/.*ADMIN_PASSWORD=\([^ ]*\).*/\1/p' "$LAUNCH_OVR" | head -1)"
+fi
+if [ -z "$LAUNCH_PW" ]; then
+    LAUNCH_PW="$(openssl rand -hex 16)"
+    LAUNCH_PW_IS_NEW=1
+fi
+
 # ----- 7. override files (untracked; survive every git pull) -----------------
 say "Writing docker-compose.override.yml files"
 
@@ -374,8 +389,18 @@ services:
     environment:
       - TZ=$TZ
       - SUITE_SECRET=$SUITE_SECRET
+      - ADMIN_PASSWORD=$LAUNCH_PW
 YAML
-ok "Overrides written"
+
+# These files hold every secret in the deployment: the SSO key (which mints a
+# valid session for ANY username on every sibling), both credential-encryption
+# keys, and the portal password. The default umask leaves them world-readable
+# inside a 0755 /projects, so any local account could read them and own the
+# whole suite without ever touching the network.
+for f in "$PROJ_ROOT"/*/docker-compose.override.yml; do
+    [ -f "$f" ] && chmod 600 "$f"
+done
+ok "Overrides written (chmod 600 - they hold your secrets)"
 
 # ----- 8. TLS certs (before first 'up', so HTTPS is on from boot) ------------
 if [ "$GEN_TLS" = 1 ]; then
@@ -462,10 +487,19 @@ echo "  SyslogCanvas         $S://$BOX_IP:9514"
 echo "  AlertCanvas          $S://$BOX_IP:9162"
 [ "$GEN_TLS" = 1 ] && echo "  (PingCanvas HTTPS also on https://$BOX_IP:8443/ ; HTTP stays on 8080. Self-signed - your browser will warn once.)"
 echo
-echo "  First visit: open LaunchCanvas and create your account (the setup page"
-echo "  belongs to whoever reaches it first - claim it now). With SSO active,"
-echo "  that one login carries into SNMPCanvas, SyslogCanvas, and AlertCanvas,"
-echo "  and the in-app Quickstart walks the rest of the ten minutes."
+echo "  First visit: open LaunchCanvas and log in as  admin  with the password"
+echo "  below. With SSO active that one login carries into SNMPCanvas,"
+echo "  SyslogCanvas, and AlertCanvas, and the in-app Quickstart walks the rest"
+echo "  of the ten minutes. Change the password from Settings once you are in."
+echo
+if [ "$LAUNCH_PW_IS_NEW" = 1 ]; then
+    printf '  %sSAVE THIS - LaunchCanvas admin password (user: admin):%s\n' "$Y" "$N"
+    printf '      %s\n' "$LAUNCH_PW"
+    echo "  The portal is already claimed, so nobody on the LAN can take it - but"
+    echo "  that also makes this the only way in until you change it."
+else
+    echo "  Reused the existing LaunchCanvas ADMIN_PASSWORD from the override."
+fi
 echo
 if [ -z "$BOARD" ] && [ ! -f "$DATA_ROOT/board.xcanvas" ]; then
     echo "  Next: draw a board in the editor, export it, and upload it from the"

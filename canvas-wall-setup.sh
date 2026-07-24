@@ -310,7 +310,13 @@ services:
       - STATUS_FILE=off
       - ALERTCANVAS_SECRET=$AC_SECRET
 YAML
-ok "Overrides written"
+
+# ALERTCANVAS_SECRET decrypts the stored SMTP password and ntfy token, and the
+# default umask would leave this file world-readable inside a 0755 /projects.
+for f in "$PROJ_ROOT"/*/docker-compose.override.yml; do
+    [ -f "$f" ] && chmod 600 "$f"
+done
+ok "Overrides written (chmod 600 - they hold your secrets)"
 
 # ----- 7. TLS certs (before first 'up', so HTTPS is on from boot) ------------
 if [ "$GEN_TLS" = 1 ]; then
