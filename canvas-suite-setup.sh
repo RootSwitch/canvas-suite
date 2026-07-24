@@ -68,6 +68,35 @@ ok()   { printf '%s  ok%s %s\n' "$G" "$N" "$*"; }
 warn() { printf '%swarn%s %s\n' "$Y" "$N" "$*" >&2; }
 die()  { printf '%sERROR%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
 
+# Read a value back out of an override file on a re-run. This script writes
+# `- KEY=value`, but a hand-edited file may quote the value or use the YAML
+# mapping form, and a commented-out old line must never win - the previous
+# pattern mis-read all three. That is not cosmetic: a mis-read secret gets
+# silently replaced by a fresh one, every credential encrypted under the old
+# one becomes unreadable, and the summary still reports "reused".
+read_secret() {
+    local key="$1" file="$2" line=""
+    [ -f "$file" ] || return 0
+    line="$(grep -E "^[[:space:]]*-?[[:space:]]*[\"']?${key}[=:]" "$file" | head -1 || true)"
+    [ -n "$line" ] || return 0
+    line="${line#*[=:]}"                        # drop everything up to the separator
+    line="${line#"${line%%[![:space:]]*}"}"     # ltrim
+    line="${line%"${line##*[![:space:]]}"}"     # rtrim
+    line="${line%\"}"; line="${line#\"}"        # unwrap "..."
+    line="${line%\'}"; line="${line#\'}"        # unwrap '...'
+    printf '%s' "$line"
+}
+
+# Stop rather than mint a replacement when a key is present but unreadable:
+# quietly generating a new secret would orphan data encrypted under the old one,
+# which is unrecoverable. Fail loud, let a human look.
+assert_readable() {
+    local key="$1" file="$2" val="$3"
+    if [ -z "$val" ] && [ -f "$file" ] && grep -q "$key" "$file"; then
+        die "$file mentions $key but no value could be read from it. Refusing to mint a replacement - anything encrypted under the old secret would become unreadable. Fix that line (or move the file aside) and re-run."
+    fi
+}
+
 [ "$(uname -s)" = "Linux" ] || die "this script targets Linux."
 command -v sudo >/dev/null 2>&1 || die "sudo not found - run as a user with sudo."
 # Cache the sudo credential once, up front, so the script never stops for a
@@ -273,7 +302,10 @@ process.stdout.write(JSON.stringify(board));
 BUILDER
     # shellcheck disable=SC2024  # user-owned output is intended; sudo is only for the docker socket
     sudo docker run --rm -v "$TMP":/w:ro,z node:22-alpine node /w/build.js /w/scan.txt > "$TMP/board.xcanvas" 2>/dev/null
-    COUNT="$(grep -o '"IP-Address"' "$TMP/board.xcanvas" 2>/dev/null | wc -l | tr -d ' ')"
+    # `|| true`: grep exits 1 when a scan found nothing, and under pipefail +
+    # errexit that killed the whole run right here - silently, with the friendly
+    # "scan produced no usable board" branch below left unreachable.
+    COUNT="$(grep -o '"IP-Address"' "$TMP/board.xcanvas" 2>/dev/null | wc -l | tr -d ' ' || true)"
     if [ -f "$DATA_ROOT/board.xcanvas" ]; then
         warn "board.xcanvas already exists - keeping it; the scan result was not applied (delete the board first to reseed)"
     elif [ -s "$TMP/board.xcanvas" ] && [ "${COUNT:-0}" -gt 0 ]; then
@@ -288,10 +320,9 @@ fi
 
 # ----- 6. SNMPCanvas secret (idempotent: reuse existing, never regenerate) ---
 SNMP_OVR="$PROJ_ROOT/snmpcanvas/docker-compose.override.yml"
-SECRET=""; SECRET_IS_NEW=0
-if [ -f "$SNMP_OVR" ]; then
-    SECRET="$(sed -n 's/.*SNMPCANVAS_SECRET=\([^ ]*\).*/\1/p' "$SNMP_OVR" | head -1)"
-fi
+SECRET_IS_NEW=0
+SECRET="$(read_secret SNMPCANVAS_SECRET "$SNMP_OVR")"
+assert_readable SNMPCANVAS_SECRET "$SNMP_OVR" "$SECRET"
 if [ -z "$SECRET" ]; then
     SECRET="$(openssl rand -base64 32)"
     SECRET_IS_NEW=1
@@ -301,10 +332,8 @@ fi
 # portal and every Node sibling. Same idempotent rule - reuse, never rotate
 # silently (rotating logs everyone out, which is a choice, not a side effect).
 LAUNCH_OVR="$PROJ_ROOT/launchcanvas/docker-compose.override.yml"
-SUITE_SECRET=""
-if [ -f "$LAUNCH_OVR" ]; then
-    SUITE_SECRET="$(sed -n 's/.*SUITE_SECRET=\([^ ]*\).*/\1/p' "$LAUNCH_OVR" | head -1)"
-fi
+SUITE_SECRET="$(read_secret SUITE_SECRET "$LAUNCH_OVR")"
+assert_readable SUITE_SECRET "$LAUNCH_OVR" "$SUITE_SECRET"
 [ -n "$SUITE_SECRET" ] || SUITE_SECRET="$(openssl rand -base64 32)"
 
 # The portal's first account. Without this, LaunchCanvas boots UNCLAIMED and the
@@ -313,10 +342,11 @@ fi
 # install. Seeding locks the door from the first boot. Idempotent like the
 # secrets above, and harmless if it ever changes: it only seeds the account when
 # none exists yet.
-LAUNCH_PW=""; LAUNCH_PW_IS_NEW=0
-if [ -f "$LAUNCH_OVR" ]; then
-    LAUNCH_PW="$(sed -n 's/.*ADMIN_PASSWORD=\([^ ]*\).*/\1/p' "$LAUNCH_OVR" | head -1)"
-fi
+LAUNCH_PW_IS_NEW=0
+# No assert_readable here on purpose: unlike the encryption keys, a re-minted
+# ADMIN_PASSWORD destroys nothing - it only seeds the account when none exists,
+# so on an already-claimed portal it is simply ignored.
+LAUNCH_PW="$(read_secret ADMIN_PASSWORD "$LAUNCH_OVR")"
 if [ -z "$LAUNCH_PW" ]; then
     LAUNCH_PW="$(openssl rand -hex 16)"
     LAUNCH_PW_IS_NEW=1
@@ -361,10 +391,8 @@ YAML
 # feed (its default status path is /status/snmp-status.json). Same idempotent
 # secret rule as SNMPCanvas: reuse, never regenerate.
 AC_OVR="$PROJ_ROOT/alertcanvas/docker-compose.override.yml"
-AC_SECRET=""
-if [ -f "$AC_OVR" ]; then
-    AC_SECRET="$(sed -n 's/.*ALERTCANVAS_SECRET=\([^ ]*\).*/\1/p' "$AC_OVR" | head -1)"
-fi
+AC_SECRET="$(read_secret ALERTCANVAS_SECRET "$AC_OVR")"
+assert_readable ALERTCANVAS_SECRET "$AC_OVR" "$AC_SECRET"
 [ -n "$AC_SECRET" ] || AC_SECRET="$(openssl rand -base64 32)"
 cat > "$AC_OVR" <<YAML
 services:

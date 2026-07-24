@@ -67,6 +67,32 @@ ok()   { printf '%s  ok%s %s\n' "$G" "$N" "$*"; }
 warn() { printf '%swarn%s %s\n' "$Y" "$N" "$*" >&2; }
 die()  { printf '%sERROR%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
 
+# Read a value back out of an override file on a re-run. This script writes
+# `- KEY=value`, but a hand-edited file may quote the value or use the YAML
+# mapping form, and a commented-out old line must never win - the previous
+# pattern mis-read all three, and a mis-read secret is silently replaced by a
+# fresh one that can no longer decrypt what the old one wrote.
+read_secret() {
+    local key="$1" file="$2" line=""
+    [ -f "$file" ] || return 0
+    line="$(grep -E "^[[:space:]]*-?[[:space:]]*[\"']?${key}[=:]" "$file" | head -1 || true)"
+    [ -n "$line" ] || return 0
+    line="${line#*[=:]}"                        # drop everything up to the separator
+    line="${line#"${line%%[![:space:]]*}"}"     # ltrim
+    line="${line%"${line##*[![:space:]]}"}"     # rtrim
+    line="${line%\"}"; line="${line#\"}"        # unwrap "..."
+    line="${line%\'}"; line="${line#\'}"        # unwrap '...'
+    printf '%s' "$line"
+}
+
+# Stop rather than mint a replacement when a key is present but unreadable.
+assert_readable() {
+    local key="$1" file="$2" val="$3"
+    if [ -z "$val" ] && [ -f "$file" ] && grep -q "$key" "$file"; then
+        die "$file mentions $key but no value could be read from it. Refusing to mint a replacement - anything encrypted under the old secret would become unreadable. Fix that line (or move the file aside) and re-run."
+    fi
+}
+
 [ "$(uname -s)" = "Linux" ] || die "this script targets Linux."
 command -v sudo >/dev/null 2>&1 || die "sudo not found - run as a user with sudo."
 sudo -v || die "this script needs sudo access - run as a user with sudo."
@@ -261,7 +287,10 @@ process.stdout.write(JSON.stringify(board));
 BUILDER
     # shellcheck disable=SC2024  # user-owned output is intended; sudo is only for the docker socket
     sudo docker run --rm -v "$TMP":/w:ro,z node:22-alpine node /w/build.js /w/scan.txt > "$TMP/board.xcanvas" 2>/dev/null
-    COUNT="$(grep -o '"IP-Address"' "$TMP/board.xcanvas" 2>/dev/null | wc -l | tr -d ' ')"
+    # `|| true`: grep exits 1 when a scan found nothing, and under pipefail +
+    # errexit that killed the whole run right here - silently, with the friendly
+    # "scan produced no usable board" branch below left unreachable.
+    COUNT="$(grep -o '"IP-Address"' "$TMP/board.xcanvas" 2>/dev/null | wc -l | tr -d ' ' || true)"
     if [ -f "$DATA_ROOT/board.xcanvas" ]; then
         warn "board.xcanvas already exists - keeping it; the scan result was not applied (delete the board first to reseed)"
     elif [ -s "$TMP/board.xcanvas" ] && [ "${COUNT:-0}" -gt 0 ]; then
@@ -294,10 +323,8 @@ YAML
 # default). Same idempotent secret rule as the full suite: reuse, never
 # regenerate.
 AC_OVR="$PROJ_ROOT/alertcanvas/docker-compose.override.yml"
-AC_SECRET=""
-if [ -f "$AC_OVR" ]; then
-    AC_SECRET="$(sed -n 's/.*ALERTCANVAS_SECRET=\([^ ]*\).*/\1/p' "$AC_OVR" | head -1)"
-fi
+AC_SECRET="$(read_secret ALERTCANVAS_SECRET "$AC_OVR")"
+assert_readable ALERTCANVAS_SECRET "$AC_OVR" "$AC_SECRET"
 [ -n "$AC_SECRET" ] || AC_SECRET="$(openssl rand -base64 32)"
 cat > "$AC_OVR" <<YAML
 services:
