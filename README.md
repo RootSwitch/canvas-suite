@@ -76,6 +76,9 @@ data backups.
 
 ## Tested on
 
+The six apps are developed and tested together; the suite as described
+here is known-good as of **2026-07-23** (each repo's `main`).
+
 - **Ubuntu Server** (Noble, fresh minimal install, 1 GB RAM / 1 vCPU)
 - **Rocky Linux 9** (fresh minimal install - SELinux and firewalld in
   their default postures)

@@ -1,6 +1,6 @@
 # Canvas suite - test deployment guide
 
-CLI-focused instructions for standing up the whole family on one box:
+CLI-focused instructions for standing up the whole suite on one box:
 
 | Project | What it does | Ports |
 |---|---|---|
@@ -290,7 +290,8 @@ ports are unchanged except PingCanvas, which moves to **8443** (8080 stays HTTP)
 
 ### First-run checklist
 
-1. **Visit SNMPCanvas and SyslogCanvas immediately** and set their admin
+1. **Visit SNMPCanvas, SyslogCanvas, AlertCanvas, and LaunchCanvas
+   immediately** and set their admin
    passwords. Both offer a first-run setup page, and whoever reaches it first
    owns the instance - claim it before something else on your LAN does (or
    pre-set `ADMIN_PASSWORD` in the compose files and skip the race).
@@ -315,6 +316,8 @@ cd ~/canvas/crosscanvas && git pull
 cd ~/canvas/pingcanvas && git pull && ./docker/build-web.sh && docker compose up -d --build
 cd ~/canvas/snmpcanvas && git pull && docker compose up -d --build
 cd ~/canvas/syslogcanvas && git pull && docker compose up -d --build
+cd ~/canvas/alertcanvas && git pull && docker compose up -d --build
+cd ~/canvas/launchcanvas && git pull && docker compose up -d --build
 ```
 
 (All repos publish ordinary incremental history on `main` as of 2026-07-22, so
@@ -327,7 +330,8 @@ and any `docker-compose.override.yml` are untracked and survive all of this.)
 ## Part 2 - Raspberry Pi / ARM64
 
 The suite runs on a Raspberry Pi (or any ARM64 box). Follow Part 1 as written -
-the compose files are identical and all four images build on arm64 - with two
+the compose files are identical and every image runs on ARM (the PowerShell
+poller transparently uses its 32-bit arm/v7 build; see Part 2's note) - with two
 Raspberry Pi OS caveats:
 
 - **Use a 64-bit OS** (recommended; tested on a Pi 3B). The PowerShell poller
@@ -356,8 +360,8 @@ Same URLs as Part 1, with the Pi's address.
 
 ## Part 3 - Windows
 
-The short version: **PingCanvas is Windows-native; the other two are not, and
-that's your cue to try virtualization.**
+The short version: **PingCanvas is Windows-native; the Node apps run under
+npm but the suite layout wants Linux - your cue to try virtualization.**
 
 **Option A - the recommended one: a VM, using Part 1.** Hyper-V is built into
 Windows 10/11 Pro (`Turn Windows features on or off` -> Hyper-V); VirtualBox
