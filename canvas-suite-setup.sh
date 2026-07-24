@@ -87,6 +87,36 @@ read_secret() {
     printf '%s' "$line"
 }
 
+# Refuse to point the installer at a directory that is not ours. Both roots get
+# `sudo chown -R`, so a one-token typo (--data /srv instead of /srv/noc-data)
+# would silently re-own every other service's data on the box, as root, with no
+# way back. Markers let a genuine re-run over an existing install pass silently.
+assert_safe_target() {
+    local path="$1" label="$2"; shift 2
+    case "$path" in
+        /*) : ;;
+        *)  die "$label must be an absolute path (got '$path')." ;;
+    esac
+    local resolved="${path%/}"
+    [ -d "$path" ] && resolved="$(cd "$path" && pwd -P)"
+    local sys
+    for sys in / /bin /boot /dev /etc /home /lib /lib64 /media /mnt /opt /proc /root /run /sbin /srv /sys /tmp /usr /var; do
+        [ "$resolved" = "$sys" ] && die "refusing to use $resolved as the $label: it is a system directory and this script chowns its target recursively. Use a dedicated path such as /srv/noc-data."
+    done
+    # Existing content that looks like nothing we ever wrote is almost always a
+    # mistyped flag rather than an install worth adopting.
+    # sudo -n so this can never sit at a password prompt; a directory we cannot
+    # list reads as empty and falls through to the chown, which is the same
+    # behaviour as before this guard existed.
+    if [ -d "$resolved" ] && [ -n "$(sudo -n ls -A "$resolved" 2>/dev/null || ls -A "$resolved" 2>/dev/null)" ]; then
+        local marker found=0
+        for marker in "$@"; do
+            [ -e "$resolved/$marker" ] && { found=1; break; }
+        done
+        [ "$found" = 1 ] || die "$resolved already holds content that does not look like a Canvas suite $label, and this script would chown it recursively. Point --${label%% *} at a new or existing suite directory instead."
+    fi
+}
+
 # Stop rather than mint a replacement when a key is present but unreadable:
 # quietly generating a new secret would orphan data encrypted under the old one,
 # which is unrecoverable. Fail loud, let a human look.
@@ -177,9 +207,21 @@ esac
 HOST_FQDN="$(hostname -f 2>/dev/null || hostname)"
 
 # ----- 3. directories --------------------------------------------------------
+assert_safe_target "$DATA_ROOT" "data root" \
+    certs snmpcanvas.db board.xcanvas syslogcanvas alertcanvas launchcanvas status.json snmp-status.json
+assert_safe_target "$PROJ_ROOT" "projects root" \
+    crosscanvas pingcanvas snmpcanvas syslogcanvas alertcanvas launchcanvas
+
 say "Creating shared data root at $DATA_ROOT (owned by container uid $APP_UID)"
 sudo mkdir -p "$DATA_ROOT/certs" "$DATA_ROOT/syslogcanvas/certs" "$DATA_ROOT/alertcanvas/certs" "$DATA_ROOT/launchcanvas/certs"
 sudo chown -R "$APP_UID:$APP_UID" "$DATA_ROOT"
+# The shared root itself has to stay world-readable: the kiosk's nginx runs as a
+# different uid inside its container and serves boards and status files straight
+# out of it. The per-app subdirectories hold only databases (message history,
+# portal accounts), so those can be owner-only without affecting anything.
+for d in syslogcanvas alertcanvas launchcanvas; do
+    [ -d "$DATA_ROOT/$d" ] && sudo chmod 750 "$DATA_ROOT/$d"
+done
 
 say "Creating repo root at $PROJ_ROOT (owned by you, so clones need no sudo)"
 sudo mkdir -p "$PROJ_ROOT"

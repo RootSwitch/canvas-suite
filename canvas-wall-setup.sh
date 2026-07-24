@@ -85,6 +85,32 @@ read_secret() {
     printf '%s' "$line"
 }
 
+# Refuse to point the installer at a directory that is not ours. Both roots get
+# `sudo chown -R`, so a one-token typo (--data /srv instead of /srv/noc-data)
+# would silently re-own every other service's data on the box, as root.
+assert_safe_target() {
+    local path="$1" label="$2"; shift 2
+    case "$path" in
+        /*) : ;;
+        *)  die "$label must be an absolute path (got '$path')." ;;
+    esac
+    local resolved="${path%/}"
+    [ -d "$path" ] && resolved="$(cd "$path" && pwd -P)"
+    local sys
+    for sys in / /bin /boot /dev /etc /home /lib /lib64 /media /mnt /opt /proc /root /run /sbin /srv /sys /tmp /usr /var; do
+        [ "$resolved" = "$sys" ] && die "refusing to use $resolved as the $label: it is a system directory and this script chowns its target recursively. Use a dedicated path such as /srv/noc-data."
+    done
+    # sudo -n so this can never sit at a password prompt; a directory we cannot
+    # list reads as empty and falls through, as it did before this guard.
+    if [ -d "$resolved" ] && [ -n "$(sudo -n ls -A "$resolved" 2>/dev/null || ls -A "$resolved" 2>/dev/null)" ]; then
+        local marker found=0
+        for marker in "$@"; do
+            [ -e "$resolved/$marker" ] && { found=1; break; }
+        done
+        [ "$found" = 1 ] || die "$resolved already holds content that does not look like a Canvas suite $label, and this script would chown it recursively. Point it at a new or existing suite directory instead."
+    fi
+}
+
 # Stop rather than mint a replacement when a key is present but unreadable.
 assert_readable() {
     local key="$1" file="$2" val="$3"
@@ -167,9 +193,16 @@ esac
 HOST_FQDN="$(hostname -f 2>/dev/null || hostname)"
 
 # ----- 3. directories --------------------------------------------------------
+assert_safe_target "$DATA_ROOT" "data root" \
+    certs board.xcanvas alertcanvas status.json status-all.json
+assert_safe_target "$PROJ_ROOT" "projects root" crosscanvas pingcanvas alertcanvas
+
 say "Creating shared data root at $DATA_ROOT (owned by container uid $APP_UID)"
 sudo mkdir -p "$DATA_ROOT/certs" "$DATA_ROOT/alertcanvas/certs"
 sudo chown -R "$APP_UID:$APP_UID" "$DATA_ROOT"
+# The shared root stays world-readable - the kiosk's nginx runs as another uid
+# and serves boards out of it. AlertCanvas's subdir holds only its database.
+[ -d "$DATA_ROOT/alertcanvas" ] && sudo chmod 750 "$DATA_ROOT/alertcanvas"
 
 say "Creating repo root at $PROJ_ROOT (owned by you, so clones need no sudo)"
 sudo mkdir -p "$PROJ_ROOT"
