@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # canvas-suite-setup.sh
+# https://github.com/RootSwitch/canvas-suite
 #
 # One-shot deploy of the Canvas suite onto a fresh Linux box (built for a newly
 # spun-up Ubuntu Server VM; also handles RHEL/Rocky/Fedora). Uses the shared-data

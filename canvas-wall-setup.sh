@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # canvas-wall-setup.sh
+# https://github.com/RootSwitch/canvas-suite
 #
 # One-shot deploy of the LIGHTWEIGHT PAIR: PingCanvas + AlertCanvas - a ping
 # wall that pages you. No SNMP, no syslog, no portal; the only interconnect
@@ -375,6 +376,7 @@ echo "  $PROJ_ROOT - back it up alongside $DATA_ROOT. A database restored onto a
 echo "  redeploy only decrypts with the same secret it was written under."
 echo
 echo "  Want SNMP graphs, syslog history, or the suite portal later? The full"
-echo "  suite installs over this layout: run canvas-suite-setup.sh on the same"
-echo "  box and flip AlertCanvas's status file path from 'off' to the SNMP feed."
+echo "  suite installs over this layout: run canvas-suite-setup.sh (from the same"
+echo "  repo: https://github.com/RootSwitch/canvas-suite) on this box and flip"
+echo "  AlertCanvas's status file path from 'off' to the SNMP feed."
 echo "  Firewall: this box now listens on 8080/8443/9162 tcp."
