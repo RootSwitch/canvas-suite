@@ -3,8 +3,10 @@
 `canvas-suite-setup.sh` stands the whole suite up on a fresh Linux box (built for
 a newly spun-up Ubuntu Server VM; also handles RHEL/Rocky/Fedora). It is the
 "run this" path; if you want to see each step by hand, use
-`canvas-suite-shared-data-deploy.md` instead - the script produces the exact same
-shared-data layout.
+`canvas-suite-shared-data-deploy.md` instead - the script produces the same
+shared-data layout (the script additionally wires SUITE_SECRET single sign-on
+into every override, adds the host FQDN to the certs, and auto-detects TZ -
+the manual doc treats those as optional steps).
 
 ## What it does
 
@@ -20,7 +22,7 @@ shared-data layout.
   and the three Node siblings so single sign-on works out of the box.
 - Generates self-signed TLS certs (unless `--no-tls`) so HTTPS is live from the
   first boot. Plain HTTP stays available too - no forced redirect.
-- Builds and starts all five stacks (CrossCanvas has no container of its own;
+- Builds and starts all five stacks - five containers cover the six apps (CrossCanvas has no container of its own;
   PingCanvas's web tier serves the editor).
 - Verifies the sensitive-file 404 guard and that the editor is serving.
 
@@ -41,7 +43,8 @@ next login picks up docker-group membership for plain `docker`.
 | Flag | Default | Purpose |
 |---|---|---|
 | `--ip ADDR` | auto-detected | address the box is reached at (set it if auto-detect grabs the wrong NIC) |
-| `--board FILE` | none | seed this `.xcanvas` as the kiosk board |
+| `--board FILE` | none | seed this `.xcanvas` as the kiosk board (never overwrites an existing board) |
+| `--scan CIDR[,CIDR...]` | none | ping-scan these subnets (`nmap -sn`) and seed a board from every host that answered, so the wall is live from minute one |
 | `--no-tls` | off | skip cert generation, HTTP only |
 | `--data DIR` | `/srv/noc-data` | shared data root |
 | `--projects DIR` | `/projects` | where the repos are cloned |
@@ -50,6 +53,11 @@ next login picks up docker-group membership for plain `docker`.
 Any of `BOX_IP`, `DATA_ROOT`, `PROJ_ROOT`, `TZ` can be set as env vars instead.
 
 ## Safe to re-run
+
+One caveat: re-runs rewrite the `docker-compose.override.yml` files (the
+minted secrets are preserved, in their `- NAME=value` form). If you add your
+own env vars, put them in the stock `docker-compose.yml` or re-add them after
+a re-run.
 
 Re-running reconciles the box to this layout. It does **not** regenerate the
 `SNMPCANVAS_SECRET`, `ALERTCANVAS_SECRET`, or `SUITE_SECRET` (it reuses the

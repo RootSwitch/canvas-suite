@@ -78,7 +78,7 @@ tidier and lets each present its own.)
 
 ## One-time setup
 
-The two Node apps run as **uid 1000** inside the container; the PingCanvas poller
+The four Node apps run as **uid 1000** inside their containers; the PingCanvas poller
 runs as root. So the dirs those apps write to must be owned by uid 1000 (root
 writes regardless). Your first login user is usually uid 1000 - check `id -u`.
 

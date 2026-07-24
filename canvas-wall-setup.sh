@@ -166,9 +166,15 @@ clone_one alertcanvas "$ORG/AlertCanvas.git"
 # ----- 5. optional board seed ------------------------------------------------
 if [ -n "$BOARD" ]; then
     [ -f "$BOARD" ] || die "board file not found: $BOARD"
-    say "Seeding board -> $DATA_ROOT/board.xcanvas"
-    sudo cp "$BOARD" "$DATA_ROOT/board.xcanvas"
-    sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/board.xcanvas"
+    # Never clobber a live board on a re-run - it may have been refined since
+    # install. Delete it to replace.
+    if [ -f "$DATA_ROOT/board.xcanvas" ]; then
+        warn "board.xcanvas already exists - keeping it (delete it first to replace)"
+    else
+        say "Seeding board -> $DATA_ROOT/board.xcanvas"
+        sudo cp "$BOARD" "$DATA_ROOT/board.xcanvas"
+        sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/board.xcanvas"
+    fi
 fi
 
 # ----- 5b. optional subnet scan -> auto-seeded board -------------------------
@@ -256,7 +262,9 @@ BUILDER
     # shellcheck disable=SC2024  # user-owned output is intended; sudo is only for the docker socket
     sudo docker run --rm -v "$TMP":/w:ro,z node:22-alpine node /w/build.js /w/scan.txt > "$TMP/board.xcanvas" 2>/dev/null
     COUNT="$(grep -o '"IP-Address"' "$TMP/board.xcanvas" 2>/dev/null | wc -l | tr -d ' ')"
-    if [ -s "$TMP/board.xcanvas" ] && [ "${COUNT:-0}" -gt 0 ]; then
+    if [ -f "$DATA_ROOT/board.xcanvas" ]; then
+        warn "board.xcanvas already exists - keeping it; the scan result was not applied (delete the board first to reseed)"
+    elif [ -s "$TMP/board.xcanvas" ] && [ "${COUNT:-0}" -gt 0 ]; then
         sudo cp "$TMP/board.xcanvas" "$DATA_ROOT/board.xcanvas"
         sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/board.xcanvas"
         ok "Seeded board from scan: $COUNT device(s) (VMs auto-iconed; edit in CrossCanvas to arrange)"
@@ -331,11 +339,20 @@ say "Starting AlertCanvas"
 # ----- 9. verify -------------------------------------------------------------
 say "Verifying"
 sleep 2
-if curl -sf "http://$BOX_IP:8080/data/certs/server.key" >/dev/null 2>&1; then
-    warn "SECURITY: server.key is being served - your PingCanvas is older than 2026-07-19. Rebuild it."
-else ok "Sensitive files 404 as expected (co-location is safe)"; fi
-# shellcheck disable=SC2015  # A && ok || warn is deliberate; ok() is a printf that doesn't fail
-curl -sf "http://$BOX_IP:8080/index.html" >/dev/null 2>&1 && ok "Editor is serving" || warn "Editor not reachable yet (containers may still be warming up)"
+# The editor check gates the sensitive-file probe: a down web tier would make
+# a failed key probe read as "safe". With --no-tls there is no server.key, so
+# a 404 would prove nothing and the probe is skipped.
+if curl -sf "http://$BOX_IP:8080/index.html" >/dev/null 2>&1; then
+    ok "Editor is serving"
+    if [ "$GEN_TLS" = 1 ]; then
+        if curl -sf "http://$BOX_IP:8080/data/certs/server.key" >/dev/null 2>&1; then
+            warn "SECURITY: server.key is being served - your PingCanvas is older than 2026-07-19. Rebuild it."
+        else ok "Sensitive files 404 as expected (co-location is safe)"; fi
+    fi
+else
+    warn "Editor not reachable yet (containers may still be warming up) - could not verify the"
+    warn "sensitive-file 404 guard; check later: curl -i http://$BOX_IP:8080/data/certs/server.key"
+fi
 S="http"; [ "$GEN_TLS" = 1 ] && S="https"
 # shellcheck disable=SC2015  # same deliberate idiom
 curl -skf "$S://$BOX_IP:9162/api/health" >/dev/null 2>&1 && ok "AlertCanvas is serving" || warn "AlertCanvas not reachable yet (may still be warming up)"

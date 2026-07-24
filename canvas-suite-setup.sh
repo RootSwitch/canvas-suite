@@ -56,7 +56,7 @@ while [ $# -gt 0 ]; do
         --data)     DATA_ROOT="$2"; shift 2 ;;
         --projects) PROJ_ROOT="$2"; shift 2 ;;
         --update)   DO_UPDATE=1; shift ;;
-        -h|--help)  sed -n '2,42p' "$0"; exit 0 ;;
+        -h|--help)  sed -n '2,35p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
     esac
 done
@@ -178,9 +178,15 @@ clone_one launchcanvas "$ORG/LaunchCanvas.git"
 # ----- 5. optional board seed ------------------------------------------------
 if [ -n "$BOARD" ]; then
     [ -f "$BOARD" ] || die "board file not found: $BOARD"
-    say "Seeding board -> $DATA_ROOT/board.xcanvas"
-    sudo cp "$BOARD" "$DATA_ROOT/board.xcanvas"
-    sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/board.xcanvas"
+    # Never clobber a live board on a re-run - it may have been refined via
+    # LaunchCanvas uploads since install. Delete it (or upload) to replace.
+    if [ -f "$DATA_ROOT/board.xcanvas" ]; then
+        warn "board.xcanvas already exists - keeping it (delete it first, or upload via LaunchCanvas, to replace)"
+    else
+        say "Seeding board -> $DATA_ROOT/board.xcanvas"
+        sudo cp "$BOARD" "$DATA_ROOT/board.xcanvas"
+        sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/board.xcanvas"
+    fi
 fi
 
 # ----- 5b. optional subnet scan -> auto-seeded board -------------------------
@@ -268,7 +274,9 @@ BUILDER
     # shellcheck disable=SC2024  # user-owned output is intended; sudo is only for the docker socket
     sudo docker run --rm -v "$TMP":/w:ro,z node:22-alpine node /w/build.js /w/scan.txt > "$TMP/board.xcanvas" 2>/dev/null
     COUNT="$(grep -o '"IP-Address"' "$TMP/board.xcanvas" 2>/dev/null | wc -l | tr -d ' ')"
-    if [ -s "$TMP/board.xcanvas" ] && [ "${COUNT:-0}" -gt 0 ]; then
+    if [ -f "$DATA_ROOT/board.xcanvas" ]; then
+        warn "board.xcanvas already exists - keeping it; the scan result was not applied (delete the board first to reseed)"
+    elif [ -s "$TMP/board.xcanvas" ] && [ "${COUNT:-0}" -gt 0 ]; then
         sudo cp "$TMP/board.xcanvas" "$DATA_ROOT/board.xcanvas"
         sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/board.xcanvas"
         ok "Seeded board from scan: $COUNT device(s) (VMs auto-iconed; edit in CrossCanvas to arrange)"
@@ -423,12 +431,21 @@ say "Starting LaunchCanvas"
 say "Verifying"
 $DC compose -f "$PROJ_ROOT/pingcanvas/docker-compose.yml" -f "$PROJ_ROOT/pingcanvas/docker-compose.override.yml" ps >/dev/null 2>&1 || true
 sleep 2
-# the shared folder is served by PingCanvas's web tier; prove the DB/key 404 guard is live
-if curl -sf "http://$BOX_IP:8080/data/certs/server.key" >/dev/null 2>&1; then
-    warn "SECURITY: server.key is being served - your PingCanvas is older than 2026-07-19. Rebuild it."
-else ok "Sensitive files 404 as expected (co-location is safe)"; fi
-# shellcheck disable=SC2015  # A && ok || warn is deliberate; ok() is a printf that doesn't fail
-curl -sf "http://$BOX_IP:8080/index.html" >/dev/null 2>&1 && ok "Editor is serving" || warn "Editor not reachable yet (containers may still be warming up)"
+# the shared folder is served by PingCanvas's web tier; prove the DB/key 404 guard
+# is live. Order matters: if the web tier is not answering, a failed key probe
+# would read as "safe" - so the editor check gates the guard check, and with
+# --no-tls there is no server.key, so a 404 would prove nothing and is skipped.
+if curl -sf "http://$BOX_IP:8080/index.html" >/dev/null 2>&1; then
+    ok "Editor is serving"
+    if [ "$GEN_TLS" = 1 ]; then
+        if curl -sf "http://$BOX_IP:8080/data/certs/server.key" >/dev/null 2>&1; then
+            warn "SECURITY: server.key is being served - your PingCanvas is older than 2026-07-19. Rebuild it."
+        else ok "Sensitive files 404 as expected (co-location is safe)"; fi
+    fi
+else
+    warn "Editor not reachable yet (containers may still be warming up) - could not verify the"
+    warn "sensitive-file 404 guard; check later: curl -i http://$BOX_IP:8080/data/certs/server.key"
+fi
 LC_S="http"; [ "$GEN_TLS" = 1 ] && LC_S="https"
 # shellcheck disable=SC2015  # same deliberate idiom
 curl -skf "$LC_S://$BOX_IP:9160/api/health" >/dev/null 2>&1 && ok "LaunchCanvas is serving" || warn "LaunchCanvas not reachable yet (may still be warming up)"
@@ -479,4 +496,5 @@ if [ "$DC" = "sudo docker" ]; then
 fi
 echo "  Pairs well with Uptime Kuma (service-level checks and status pages -"
 echo "  its own compose stack on 3001, no port conflict with anything here)."
-echo "  Firewall: this box now listens on 8080/8443/9160/9161/9162/9514 tcp and 514/162 udp."
+PORTS_TCP="8080/8443"; [ "$GEN_TLS" = 1 ] || PORTS_TCP="8080"
+echo "  Firewall: this box now listens on $PORTS_TCP/9160/9161/9162/9514 tcp and 514/162 udp."

@@ -317,10 +317,10 @@ cd ~/canvas/snmpcanvas && git pull && docker compose up -d --build
 cd ~/canvas/syslogcanvas && git pull && docker compose up -d --build
 ```
 
-(PingCanvas and CrossCanvas publish as single-commit snapshots, so those two
-pulls may report a forced update; `git reset --hard origin/main` /
-`origin/master` is the clean way to take it. Your `data/` directories and any
-`docker-compose.override.yml` are untracked and survive all of this.)
+(All repos publish ordinary incremental history on `main` as of 2026-07-22, so
+plain `git pull` is the whole story. A clone made before that date may refuse
+to pull for PingCanvas/CrossCanvas - re-clone once. Your `data/` directories
+and any `docker-compose.override.yml` are untracked and survive all of this.)
 
 ---
 
@@ -330,10 +330,13 @@ The suite runs on a Raspberry Pi (or any ARM64 box). Follow Part 1 as written -
 the compose files are identical and all four images build on arm64 - with two
 Raspberry Pi OS caveats:
 
-- **Use a 64-bit OS.** This is required, not preferred: the PowerShell poller
-  image is arm64-only (no 32-bit ARM build), so a 32-bit Pi OS can't run it.
-  Raspberry Pi Imager -> Raspberry Pi OS **Lite (64-bit)**; enable SSH and set
-  your user in the gear-icon customization, then ssh in.
+- **Use a 64-bit OS** (recommended; tested on a Pi 3B). The PowerShell poller
+  base image publishes no arm64 build - Docker transparently pulls its 32-bit
+  arm/v7 build, which a 64-bit kernel runs natively (verified: the built image
+  reports arm v7 and runs healthy). A 32-bit Pi OS also works: every image in
+  the pair has a native arm/v7 variant. Raspberry Pi Imager -> Raspberry Pi OS
+  **Lite (64-bit)**; enable SSH and set your user in the gear-icon
+  customization, then ssh in.
 - **Install Docker via the convenience script**, because Debian/Raspberry Pi
   OS's packaged compose is the old v1 and chokes on these compose files:
 

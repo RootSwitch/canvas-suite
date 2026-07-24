@@ -12,10 +12,10 @@ scripts that stand them up on a fresh Linux box in minutes.
 
 | App | What it does | Port |
 |---|---|---|
-| [**CrossCanvas**](https://github.com/RootSwitch/CrossCanvas) | The diagram editor - one HTML file, no server, no accounts. Draws the boards everything else displays. | (static) |
+| [**CrossCanvas**](https://github.com/RootSwitch/CrossCanvas) | The diagram editor - one folder of static files, no build, no server, no accounts. Draws the boards everything else displays. | (static) |
 | [**PingCanvas**](https://github.com/RootSwitch/PingCanvas) | Turns a diagram into a live reachability wall - devices glow with ping status on a kiosk display. | 8080 / 8443 |
 | [**SNMPCanvas**](https://github.com/RootSwitch/SNMPCanvas) | Polls device health over SNMP - interfaces, CPU, temperature, UPS state - graphs the history, and feeds live readings onto the wall. | 9161 |
-| [**SyslogCanvas**](https://github.com/RootSwitch/SyslogCanvas) | Catches what your devices say - syslog and SNMP traps, searchable. | 9514 |
+| [**SyslogCanvas**](https://github.com/RootSwitch/SyslogCanvas) | Catches what your devices say - syslog and SNMP traps, searchable. | 9514 (web); ingest 514 + 162 udp |
 | [**AlertCanvas**](https://github.com/RootSwitch/AlertCanvas) | Turns readings into notifications - thresholds, device-down, ping-down - via email, ntfy, or syslog. | 9162 |
 | [**LaunchCanvas**](https://github.com/RootSwitch/LaunchCanvas) | The front door - one login, a tile for each app, single sign-on across the suite, board upload/download. | 9160 |
 
@@ -65,6 +65,9 @@ manual installs do not get), generates TLS certs, and builds and starts
 the stacks. `docs/canvas-suite-setup.md` walks through it step by step,
 and `docs/canvas-suite-shared-data-deploy.md` is the same layout done by
 hand if you would rather see every move.
+`docs/canvas-suite-test-deploy.md` is the from-scratch tutorial - firewall
+guidance, VM sizing, Raspberry Pi notes, Windows options, and the
+first-run password checklist live there.
 
 **Back up your secrets:** they live in the `docker-compose.override.yml`
 files under `/projects`. A database restored onto a redeploy only decrypts
