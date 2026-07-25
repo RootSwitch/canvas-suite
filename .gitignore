@@ -1,0 +1,4 @@
+# Offline image tarballs from build-images.sh - hundreds of MB of built
+# artifacts, and republishing them from a repo is exactly the redistribution
+# decision that script deliberately leaves to a human.
+dist/
