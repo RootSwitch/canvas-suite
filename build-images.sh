@@ -73,7 +73,14 @@ for app in $APPS; do
         save=("$app:latest")
         if [ -n "$VERSION" ]; then tags+=(-t "$app:$VERSION"); save=("$app:$VERSION" "$app:latest"); fi
         echo ">> $app  linux/$arch${VERSION:+  v$VERSION}   ($repo)"
-        docker buildx build --platform "linux/$arch" "${tags[@]}" --load "$repo"
+        # --sbom / --provenance are attestations, and `docker save` (below) does
+        # not carry them - they only survive a push to a registry. Requested
+        # anyway so the same command works either way, and so an image built
+        # here can answer "what is inside you" mechanically rather than from
+        # THIRD-PARTY.md, which is hand-written and can drift. For a saved
+        # tarball, inspect the loaded image instead:  syft <app>:latest
+        docker buildx build --platform "linux/$arch" "${tags[@]}" \
+            --sbom=true --provenance=true --load "$repo"
         tarball="$OUT/${app}${VERSION:+-$VERSION}-${arch}.tar.gz"
         docker save "${save[@]}" | gzip > "$tarball"
         echo "   wrote $(basename "$tarball") ($(du -h "$tarball" | cut -f1))"

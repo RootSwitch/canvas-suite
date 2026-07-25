@@ -125,3 +125,12 @@ while. If you are installing Ubuntu Server itself, its installer wants
 Everything here, like every app in the suite, is released into the public
 domain under [the Unlicense](LICENSE). Use it, fork it, sell it, no
 attribution needed.
+
+That covers **our code**. A container image is a compilation: it also holds an
+OS userland, a JavaScript runtime and npm packages under their own licences
+(mostly MIT, plus GPL-2.0 for BusyBox from the Alpine base). A public-domain
+dedication cannot relicense any of that. If you redistribute the images, ship
+them inside a product, or need to answer a compliance question,
+[THIRD-PARTY.md](THIRD-PARTY.md) lists what is inside, where the notices live,
+and how to get source for the GPL components. Building from source with
+`build: .` sidesteps the question entirely.
