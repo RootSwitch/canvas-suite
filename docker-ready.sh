@@ -181,6 +181,28 @@ if [ "$DO_DOCKER" = 1 ]; then
             || die "docker compose v2 not available (got compose v1?). Reinstall Docker via get.docker.com."
         ok "compose v2 present ($($DC compose version --short 2>/dev/null || echo v2))"
     fi
+
+    # Group membership, handled outside the install branch: Docker may already
+    # have been here while this user was never added.
+    if getent group docker >/dev/null 2>&1 \
+       && ! id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+        say "Adding $USER to the docker group"
+        run sudo usermod -aG docker "$USER"
+    fi
+fi
+
+# Distinguish the two states that both look like "docker says permission
+# denied": not in the group at all, versus in it but the shell predates the
+# change. Only the second is fixed by logging out, and inferring it from
+# "did we need sudo" gets it wrong when sudo failed for another reason.
+#   id -nG "$USER"  asks the account database (updated by usermod immediately)
+#   id -nG          asks THIS process (unchanged until a new login)
+GROUP_PENDING=0
+if [ "$CHECK_ONLY" = 0 ] && getent group docker >/dev/null 2>&1; then
+    if id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker \
+       && ! id -nG 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+        GROUP_PENDING=1
+    fi
 fi
 
 # ----- 4. directories -------------------------------------------------------
@@ -306,6 +328,29 @@ else
     say "Box is ready. Next:"
     echo "  - Canvas suite:  ./canvas-suite-setup.sh"
     echo "  - anything else: drop the project in $PROJ_ROOT and 'docker compose up -d'"
-    [ -n "$DC" ] && [ "$DC" = "sudo docker" ] && \
-        echo "  - log out and back in to use 'docker' without sudo"
 fi
+
+# LAST, and loud. This is the one thing a person walks away without doing, and
+# it resurfaces minutes later as "permission denied while trying to connect to
+# the Docker daemon socket" - which reads like a broken install rather than a
+# stale shell. Anything printed after this gets scrolled past.
+if [ "$GROUP_PENDING" = 1 ]; then
+    echo
+    printf '%s============================================================%s\n' "$Y" "$N"
+    printf '%s  YOUR SHELL IS STALE - log out and back in before using docker%s\n' "$Y" "$N"
+    printf '%s============================================================%s\n' "$Y" "$N"
+    echo "  You are in the 'docker' group now, but THIS session started before"
+    echo "  that was true, so plain 'docker' commands will say:"
+    echo
+    echo "      permission denied while trying to connect to the Docker daemon socket"
+    echo
+    echo "  That is a stale shell, not a broken install. Any one of these fixes it:"
+    echo "      log out and back in       (the real fix, and it persists)"
+    echo "      newgrp docker             (this shell only, right now)"
+    echo "      prefix commands with sudo (works immediately, no re-login)"
+    echo
+fi
+
+# End on a known-good status. A trailing '&&' chain here returns non-zero when
+# its last test is false, which would fail a perfectly healthy run.
+exit 0

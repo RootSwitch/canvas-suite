@@ -591,14 +591,31 @@ echo "  in the docker-compose.override.yml files under $PROJ_ROOT - back those u
 echo "  alongside $DATA_ROOT. A database restored onto a redeploy only decrypts"
 echo "  with the same secrets it was written under."
 echo
-if [ "$DC" = "sudo docker" ]; then
-    printf '  %sNOTE:%s plain "docker" commands will say "permission denied" until you log\n' "$Y" "$N"
-    echo "  out and back in once (docker group membership activates on next login;"
-    echo "  'newgrp docker' works too). Until then, prefix with sudo. Nothing at"
-    echo "  $PROJ_ROOT needs different permissions - it is the Docker socket, not the files."
-    echo
-fi
 echo "  Pairs well with Uptime Kuma (service-level checks and status pages -"
 echo "  its own compose stack on 3001, no port conflict with anything here)."
 PORTS_TCP="8080/8443"; [ "$GEN_TLS" = 1 ] || PORTS_TCP="8080"
 echo "  Firewall: this box now listens on $PORTS_TCP/9160/9161/9162/9514 tcp and 514/162 udp."
+
+# LAST, and loud. This note used to sit mid-summary, above the firewall line,
+# where it was true, correct, and scrolled past - then resurfaced minutes later
+# as "permission denied while trying to connect to the Docker daemon socket",
+# which reads like a broken install rather than a stale shell. Nothing prints
+# after this on purpose.
+if [ "$DC" = "sudo docker" ]; then
+    echo
+    printf '%s============================================================%s\n' "$Y" "$N"
+    printf '%s  YOUR SHELL IS STALE - log out and back in before using docker%s\n' "$Y" "$N"
+    printf '%s============================================================%s\n' "$Y" "$N"
+    echo "  You are in the 'docker' group now, but THIS session started before"
+    echo "  that was true, so plain 'docker' commands will say:"
+    echo
+    echo "      permission denied while trying to connect to the Docker daemon socket"
+    echo
+    echo "  That is a stale shell, not a broken install. Any one of these fixes it:"
+    echo "      log out and back in       (the real fix, and it persists)"
+    echo "      newgrp docker             (this shell only, right now)"
+    echo "      prefix commands with sudo (works immediately, no re-login)"
+    echo
+    echo "  Nothing at $PROJ_ROOT needs different permissions - it is the"
+    echo "  Docker socket that is gated, not your files."
+fi
