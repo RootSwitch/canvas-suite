@@ -22,7 +22,7 @@ scripts that stand them up on a fresh Linux box in minutes.
 Everything is deliberately small: plain files, SQLite, no runtime
 dependencies beyond Docker, and diagrams that never leave your network.
 
-## Two scripts
+## Three scripts
 
 - **`canvas-suite-setup.sh`** - the whole suite, six apps, shared data
   layout, single sign-on wired up. For the box that will be your
@@ -30,10 +30,26 @@ dependencies beyond Docker, and diagrams that never leave your network.
 - **`canvas-wall-setup.sh`** - the lightweight pair: PingCanvas +
   AlertCanvas only. A ping wall that pages you; light enough for a
   Raspberry Pi.
+- **`docker-ready.sh`** - installs no application. It prepares a bare box
+  for containers of this shape and then gets out of the way: Docker with
+  compose v2, the daemon *enabled* (the RHEL family does not start it on
+  install), your user in the docker group, host directories owned by the
+  uid the containers run as, and the host firewall opened if you ask.
+  Run it with `--check` first and it changes nothing, just reports.
 
-Both are safe to re-run: they never regenerate existing secrets, never
+All three are safe to re-run: they never regenerate existing secrets, never
 touch existing history or certs, and a re-run after a failure resumes
 where it left off.
+
+`docker-ready.sh` is deliberately app-agnostic - the other two call the
+same ground it covers, but it is equally the right first step for any
+container that expects a bind mount owned by uid 1000 and a published
+port. Use it, then deploy whatever you like:
+
+```bash
+bash docker-ready.sh --check
+bash docker-ready.sh --ports 7777 --data /srv/appdata
+```
 
 ## Quickstart
 
