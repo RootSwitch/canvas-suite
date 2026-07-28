@@ -68,6 +68,28 @@ ok()   { printf '%s  ok%s %s\n' "$G" "$N" "$*"; }
 warn() { printf '%swarn%s %s\n' "$Y" "$N" "$*" >&2; }
 die()  { printf '%sERROR%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
 
+# Poll a URL until it answers. A first install has just built six images and
+# started six containers, and a single probe a couple of seconds later almost
+# always finds nothing up yet - which meant the server.key 404 guard in section
+# 10 was skipped on exactly the runs where it matters most, on a fresh box,
+# reporting "check later" instead. Honest, and useless. Retrying turns a check
+# that usually skips into one that usually runs.
+# 40 x 3s: generous for containers that are starting rather than building, and
+# still bounded, because a box that has not answered in two minutes has a
+# problem worth reporting rather than waiting longer for.
+wait_for() {
+    local url="$1" label="$2" tries=40 i=1
+    while [ "$i" -le "$tries" ]; do
+        curl -skf "$url" >/dev/null 2>&1 && { [ "$i" -gt 1 ] && printf '\n'; return 0; }
+        [ "$i" = 1 ] && printf '     waiting for %s' "$label"
+        printf '.'
+        sleep 3
+        i=$((i + 1))
+    done
+    printf '\n'
+    return 1
+}
+
 # Read a value back out of an override file on a re-run. This script writes
 # `- KEY=value`, but a hand-edited file may quote the value or use the YAML
 # mapping form, and a commented-out old line must never win - the previous
@@ -397,6 +419,12 @@ fi
 # ----- 7. override files (untracked; survive every git pull) -----------------
 say "Writing docker-compose.override.yml files"
 
+# Every file written below carries secrets. Create them private and tighten
+# afterwards, rather than the other way round - see the note at the end of this
+# section. Restored before section 8 so nothing else inherits it.
+OLD_UMASK="$(umask)"
+umask 077
+
 cat > "$PROJ_ROOT/pingcanvas/docker-compose.override.yml" <<YAML
 services:
   web:
@@ -467,9 +495,17 @@ YAML
 # keys, and the portal password. The default umask leaves them world-readable
 # inside a 0755 /projects, so any local account could read them and own the
 # whole suite without ever touching the network.
+#
+# The umask above the writes is what actually closes this; the chmod below is
+# the belt. Written in that order because `cat > file` creates it at the
+# prevailing umask and only then gets tightened, leaving a brief window in
+# which the file exists world-readable. Microseconds on a box you are still
+# provisioning - but the umask costs nothing and removes the window entirely
+# rather than shrinking it.
 for f in "$PROJ_ROOT"/*/docker-compose.override.yml; do
     [ -f "$f" ] && chmod 600 "$f"
 done
+umask "$OLD_UMASK"
 ok "Overrides written (chmod 600 - they hold your secrets)"
 
 # ----- 8. TLS certs (before first 'up', so HTTPS is on from boot) ------------
@@ -525,12 +561,11 @@ say "Starting LaunchCanvas"
 # ----- 10. verify ------------------------------------------------------------
 say "Verifying"
 $DC compose -f "$PROJ_ROOT/pingcanvas/docker-compose.yml" -f "$PROJ_ROOT/pingcanvas/docker-compose.override.yml" ps >/dev/null 2>&1 || true
-sleep 2
 # the shared folder is served by PingCanvas's web tier; prove the DB/key 404 guard
 # is live. Order matters: if the web tier is not answering, a failed key probe
 # would read as "safe" - so the editor check gates the guard check, and with
 # --no-tls there is no server.key, so a 404 would prove nothing and is skipped.
-if curl -sf "http://$BOX_IP:8080/index.html" >/dev/null 2>&1; then
+if wait_for "http://$BOX_IP:8080/index.html" "the editor"; then
     ok "Editor is serving"
     if [ "$GEN_TLS" = 1 ]; then
         if curl -sf "http://$BOX_IP:8080/data/certs/server.key" >/dev/null 2>&1; then
@@ -538,12 +573,18 @@ if curl -sf "http://$BOX_IP:8080/index.html" >/dev/null 2>&1; then
         else ok "Sensitive files 404 as expected (co-location is safe)"; fi
     fi
 else
-    warn "Editor not reachable yet (containers may still be warming up) - could not verify the"
-    warn "sensitive-file 404 guard; check later: curl -i http://$BOX_IP:8080/data/certs/server.key"
+    warn "Editor still not answering after two minutes - could not verify the sensitive-file"
+    warn "404 guard. That is long enough to be a real problem rather than a slow start:"
+    warn "  $DC compose -f $PROJ_ROOT/pingcanvas/docker-compose.yml logs web"
+    warn "Once it is up: curl -i http://$BOX_IP:8080/data/certs/server.key  (expect 404)"
 fi
 LC_S="http"; [ "$GEN_TLS" = 1 ] && LC_S="https"
-# shellcheck disable=SC2015  # same deliberate idiom
-curl -skf "$LC_S://$BOX_IP:9160/api/health" >/dev/null 2>&1 && ok "LaunchCanvas is serving" || warn "LaunchCanvas not reachable yet (may still be warming up)"
+if wait_for "$LC_S://$BOX_IP:9160/api/health" "LaunchCanvas"; then
+    ok "LaunchCanvas is serving"
+else
+    warn "LaunchCanvas still not answering after two minutes - check:"
+    warn "  $DC compose -f $PROJ_ROOT/launchcanvas/docker-compose.yml logs"
+fi
 
 # ----- 11. summary -----------------------------------------------------------
 S="http"; [ "$GEN_TLS" = 1 ] && S="https"
