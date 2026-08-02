@@ -1,4 +1,4 @@
-# Canvas Suite
+# <img src="docs/suite-mark.svg" width="42" align="top" alt=""> Canvas Suite
 
 > Draw your network, then watch it live. Six small self-hosted apps that
 > turn a network diagram into a monitoring wall - reachability, SNMP
