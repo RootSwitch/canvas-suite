@@ -73,8 +73,14 @@ or certs. Use `--update` when you want it to also pull the latest code.
 - If it minted a new `SNMPCANVAS_SECRET`, it prints it once - copy that into a
   password manager. It is the only thing that decrypts your SNMP credentials.
 - No board yet? Draw one in the editor, export it, and upload it from the
-  LaunchCanvas Launch page (or save it as `/srv/noc-data/board.xcanvas` by
-  hand). The kiosk shows a getting-started page until then.
+  LaunchCanvas Launch page (or save it as
+  `/srv/noc-data/.private/board.xcanvas` by hand). The kiosk shows a
+  getting-started page until then.
+- Boards live under `.private` on purpose: the web tier never serves that
+  path, the poller writes a sanitized `.wall` copy (hidden device fields
+  stripped) into the served root, and the printed kiosk URL points at the
+  `.wall` pair - so the URL carries no more than the picture shows. Details
+  in PingCanvas's DEPLOY.md.
 - Pairs well with Uptime Kuma (service-level checks and status pages) as its
   own compose stack (port 3001) with no conflict.
 

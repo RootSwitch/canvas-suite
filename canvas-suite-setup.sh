@@ -230,12 +230,18 @@ HOST_FQDN="$(hostname -f 2>/dev/null || hostname)"
 
 # ----- 3. directories --------------------------------------------------------
 assert_safe_target "$DATA_ROOT" "data root" \
-    certs snmpcanvas.db board.xcanvas syslogcanvas alertcanvas launchcanvas status.json snmp-status.json
+    certs snmpcanvas.db board.xcanvas syslogcanvas alertcanvas launchcanvas status.json snmp-status.json .private
 assert_safe_target "$PROJ_ROOT" "projects root" \
     crosscanvas pingcanvas snmpcanvas syslogcanvas alertcanvas launchcanvas
 
 say "Creating shared data root at $DATA_ROOT (owned by container uid $APP_UID)"
-sudo mkdir -p "$DATA_ROOT/certs" "$DATA_ROOT/syslogcanvas/certs" "$DATA_ROOT/alertcanvas/certs" "$DATA_ROOT/launchcanvas/certs"
+# .private is the wall split's home (PingCanvas DEPLOY.md): boards placed
+# there are SOURCES the web tier never serves (nginx 404s dot-paths under
+# /data), the poller walls them automatically, and only the stripped .wall
+# pair is served. New installs are private-by-default: the seed and
+# LaunchCanvas uploads land here, and the kiosk URL below points at the
+# .wall pair - so the URL never carries more than the picture shows.
+sudo mkdir -p "$DATA_ROOT/certs" "$DATA_ROOT/syslogcanvas/certs" "$DATA_ROOT/alertcanvas/certs" "$DATA_ROOT/launchcanvas/certs" "$DATA_ROOT/.private"
 sudo chown -R "$APP_UID:$APP_UID" "$DATA_ROOT"
 # The shared root itself has to stay world-readable: the kiosk's nginx runs as a
 # different uid inside its container and serves boards and status files straight
@@ -273,12 +279,12 @@ if [ -n "$BOARD" ]; then
     [ -f "$BOARD" ] || die "board file not found: $BOARD"
     # Never clobber a live board on a re-run - it may have been refined via
     # LaunchCanvas uploads since install. Delete it (or upload) to replace.
-    if [ -f "$DATA_ROOT/board.xcanvas" ]; then
-        warn "board.xcanvas already exists - keeping it (delete it first, or upload via LaunchCanvas, to replace)"
+    if [ -f "$DATA_ROOT/board.xcanvas" ] || [ -f "$DATA_ROOT/.private/board.xcanvas" ]; then
+        warn "a board already exists - keeping it (delete it first, or upload via LaunchCanvas, to replace)"
     else
-        say "Seeding board -> $DATA_ROOT/board.xcanvas"
-        sudo cp "$BOARD" "$DATA_ROOT/board.xcanvas"
-        sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/board.xcanvas"
+        say "Seeding board -> $DATA_ROOT/.private/board.xcanvas (the poller serves a sanitized .wall copy)"
+        sudo cp "$BOARD" "$DATA_ROOT/.private/board.xcanvas"
+        sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/.private/board.xcanvas"
     fi
 fi
 
@@ -370,11 +376,11 @@ BUILDER
     # errexit that killed the whole run right here - silently, with the friendly
     # "scan produced no usable board" branch below left unreachable.
     COUNT="$(grep -o '"IP-Address"' "$TMP/board.xcanvas" 2>/dev/null | wc -l | tr -d ' ' || true)"
-    if [ -f "$DATA_ROOT/board.xcanvas" ]; then
-        warn "board.xcanvas already exists - keeping it; the scan result was not applied (delete the board first to reseed)"
+    if [ -f "$DATA_ROOT/board.xcanvas" ] || [ -f "$DATA_ROOT/.private/board.xcanvas" ]; then
+        warn "a board already exists - keeping it; the scan result was not applied (delete the board first to reseed)"
     elif [ -s "$TMP/board.xcanvas" ] && [ "${COUNT:-0}" -gt 0 ]; then
-        sudo cp "$TMP/board.xcanvas" "$DATA_ROOT/board.xcanvas"
-        sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/board.xcanvas"
+        sudo cp "$TMP/board.xcanvas" "$DATA_ROOT/.private/board.xcanvas"
+        sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/.private/board.xcanvas"
         ok "Seeded board from scan: $COUNT device(s) (VMs auto-iconed; edit in CrossCanvas to arrange)"
     else
         warn "Scan produced no usable board (nothing responded, or nmap needs root on this segment) - draw one in the editor instead."
@@ -474,6 +480,10 @@ services:
       - TZ=$TZ
       - ALERTCANVAS_SECRET=$AC_SECRET
       - SUITE_SECRET=$SUITE_SECRET
+      # One private board moves the poller's combined status-all.json into
+      # .private (hostnames must not resurface at the served root), so the
+      # ping-alert feed points there. A value saved in Settings still wins.
+      - PING_STATUS_FILE=/status/.private/status-all.json
 YAML
 
 # LaunchCanvas: own data dir, plus the shared root writable at /boards so
@@ -483,7 +493,10 @@ services:
   launchcanvas:
     volumes:
       - $DATA_ROOT/launchcanvas:/data:z
-      - $DATA_ROOT:/boards:z
+      # Uploads land in the wall split's private dir: the poller sanitizes
+      # and serves the .wall pair, and an authenticated download still gets
+      # the full board (downloads read from this same mount).
+      - $DATA_ROOT/.private:/boards:z
     environment:
       - TZ=$TZ
       - SUITE_SECRET=$SUITE_SECRET
@@ -592,12 +605,31 @@ echo
 printf '%s================ Canvas suite is up ================%s\n' "$B" "$N"
 echo "  LaunchCanvas (start here)  $S://$BOX_IP:9160  - one login for the suite"
 echo "  CrossCanvas editor   http://$BOX_IP:8080/index.html"
-echo "  PingCanvas kiosk     http://$BOX_IP:8080/kiosk.html?board=data/board.xcanvas&status=data/status.json&snmp=data/snmp-status.json"
+echo "  PingCanvas kiosk     http://$BOX_IP:8080/kiosk.html?board=data/board.wall.xcanvas&status=data/status.wall.json&snmp=data/snmp-status.json"
 echo "  SNMPCanvas           $S://$BOX_IP:9161"
 echo "  SyslogCanvas         $S://$BOX_IP:9514"
 echo "  AlertCanvas          $S://$BOX_IP:9162"
 [ "$GEN_TLS" = 1 ] && echo "  (PingCanvas HTTPS also on https://$BOX_IP:8443/ ; HTTP stays on 8080. Self-signed - your browser will warn once.)"
 echo
+# A re-run on an install that predates the private-by-default layout: boards
+# at the served root still work at their old URLs, but they are served in
+# full (hostnames, addresses, fields), and LaunchCanvas uploads now land in
+# .private - so a legacy root board would silently stop receiving uploads.
+# Loud advisory, no auto-move: moving the file would break every kiosk URL
+# already pointing at it, and that is the operator's call to schedule.
+LEGACY_BOARDS="$(sudo find "$DATA_ROOT" -maxdepth 1 \( -name '*.xcanvas' -o -name '*.netdraw' \) ! -name '*.wall.*' -printf '%f ' 2>/dev/null || true)"
+if [ -n "$LEGACY_BOARDS" ]; then
+    printf '  %sBOARDS AT THE SERVED ROOT: %s%s\n' "$Y" "$LEGACY_BOARDS" "$N"
+    echo "  These predate the private-by-default layout: they still work at their old"
+    echo "  URLs but are served IN FULL (hostnames, addresses, custom fields), and"
+    echo "  LaunchCanvas uploads now land in .private - a root board no longer"
+    echo "  receives them. To adopt the private layout per board:"
+    echo "      sudo mv $DATA_ROOT/<name>.xcanvas $DATA_ROOT/.private/"
+    echo "      sudo rm $DATA_ROOT/status*.json        # stale, still served, IP-keyed"
+    echo "  then point its kiosk URL at data/<name>.wall.xcanvas + the .wall.json"
+    echo "  status (the poller writes both within one poll cycle)."
+    echo
+fi
 echo "  First visit: open LaunchCanvas and log in as  admin  with the password"
 echo "  below. With SSO active that one login carries into SNMPCanvas,"
 echo "  SyslogCanvas, and AlertCanvas, and the in-app Quickstart walks the rest"
@@ -612,7 +644,7 @@ else
     echo "  Reused the existing LaunchCanvas ADMIN_PASSWORD from the override."
 fi
 echo
-if [ -z "$BOARD" ] && [ ! -f "$DATA_ROOT/board.xcanvas" ]; then
+if [ -z "$BOARD" ] && [ ! -f "$DATA_ROOT/.private/board.xcanvas" ] && [ ! -f "$DATA_ROOT/board.xcanvas" ]; then
     echo "  Next: draw a board in the editor, export it, and upload it from the"
     echo "        LaunchCanvas Launch page (the kiosk shows a getting-started page until then)."
     echo
