@@ -79,8 +79,11 @@ or certs. Use `--update` when you want it to also pull the latest code.
 - Boards live under `.private` on purpose: the web tier never serves that
   path, the poller writes a sanitized `.wall` copy (hidden device fields
   stripped) into the served root, and the printed kiosk URL points at the
-  `.wall` pair - so the URL carries no more than the picture shows. Details
-  in PingCanvas's DEPLOY.md.
+  `.wall` pair - so the URL carries no more than the picture shows. The SNMP
+  feed gets the same split: SNMPCanvas writes its full export (device names,
+  addresses, interface names) into `.private` for AlertCanvas, and the served
+  root only carries `snmp-status.wall.json` - codes and values, nothing that
+  names anything. Details in PingCanvas's DEPLOY.md.
 - Pairs well with Uptime Kuma (service-level checks and status pages) as its
   own compose stack (port 3001) with no conflict.
 

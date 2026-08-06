@@ -451,6 +451,11 @@ services:
       - TZ=$TZ
       - SNMPCANVAS_SECRET=$SECRET
       - SUITE_SECRET=$SUITE_SECRET
+      # Full feed (device names, hosts, ifNames) into the unserved .private;
+      # the wall variant (codes + values only) lands at the served root by
+      # default, and that is what the kiosk URL reads. A value saved in
+      # SNMPCanvas Settings still wins over this.
+      - SNMPCANVAS_EXPORT=/data/.private/snmp-status.json
 YAML
 
 cat > "$PROJ_ROOT/syslogcanvas/docker-compose.override.yml" <<YAML
@@ -484,6 +489,10 @@ services:
       # .private (hostnames must not resurface at the served root), so the
       # ping-alert feed points there. A value saved in Settings still wins.
       - PING_STATUS_FILE=/status/.private/status-all.json
+      # Alert text needs device names, so AlertCanvas reads the FULL SNMP
+      # feed - which SNMPCanvas now writes into .private (the served root
+      # only carries the anonymized wall variant).
+      - STATUS_FILE=/status/.private/snmp-status.json
 YAML
 
 # LaunchCanvas: own data dir, plus the shared root writable at /boards so
@@ -605,7 +614,7 @@ echo
 printf '%s================ Canvas suite is up ================%s\n' "$B" "$N"
 echo "  LaunchCanvas (start here)  $S://$BOX_IP:9160  - one login for the suite"
 echo "  CrossCanvas editor   http://$BOX_IP:8080/index.html"
-echo "  PingCanvas kiosk     http://$BOX_IP:8080/kiosk.html?board=data/board.wall.xcanvas&status=data/status.wall.json&snmp=data/snmp-status.json"
+echo "  PingCanvas kiosk     http://$BOX_IP:8080/kiosk.html?board=data/board.wall.xcanvas&status=data/status.wall.json&snmp=data/snmp-status.wall.json"
 echo "  SNMPCanvas           $S://$BOX_IP:9161"
 echo "  SyslogCanvas         $S://$BOX_IP:9514"
 echo "  AlertCanvas          $S://$BOX_IP:9162"
@@ -628,6 +637,25 @@ if [ -n "$LEGACY_BOARDS" ]; then
     echo "      sudo rm $DATA_ROOT/status*.json        # stale, still served, IP-keyed"
     echo "  then point its kiosk URL at data/<name>.wall.xcanvas + the .wall.json"
     echo "  status (the poller writes both within one poll cycle)."
+    echo
+fi
+# Same shape for the SNMP feed: on fresh installs the full file lives in
+# .private and only the wall variant (snmp-status.wall.json) is served, so a
+# full-name snmp-status.json at the served root only exists on an install
+# that predates the split.
+if sudo test -f "$DATA_ROOT/snmp-status.json" 2>/dev/null || [ -f "$DATA_ROOT/snmp-status.json" ]; then
+    printf '  %sFULL SNMP FEED AT THE SERVED ROOT: snmp-status.json%s\n' "$Y" "$N"
+    echo "  It names every monitored device (sysName, address, interface names) -"
+    echo "  including ones on no board - and the web tier serves it. SNMPCanvas now"
+    echo "  defaults its full export to .private and serves only an anonymized"
+    echo "  snmp-status.wall.json (codes + values). To finish the move:"
+    echo "    - if you never changed the export path in SNMPCanvas Settings, this"
+    echo "      copy is already STALE (the container writes to .private now):"
+    echo "          sudo rm $DATA_ROOT/snmp-status.json"
+    echo "    - if you DID save one, point it at $DATA_ROOT/.private/snmp-status.json"
+    echo "      in SNMPCanvas Settings first, and AlertCanvas's SNMP feed path at"
+    echo "      the same file, then remove the root copy."
+    echo "  Kiosk URLs carrying &snmp= should read data/snmp-status.wall.json."
     echo
 fi
 echo "  First visit: open LaunchCanvas and log in as  admin  with the password"
