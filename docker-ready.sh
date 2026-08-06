@@ -27,7 +27,7 @@
 #
 #   --check           report only; make no changes, install nothing
 #   --ports LIST      open these TCP ports in the host firewall (e.g. 7777,9161)
-#   --projects DIR    create a projects root you own      (default: /projects)
+#   --projects DIR    create a projects root you own      (default: /opt/canvas-suite)
 #   --data DIR        create a data root owned by uid 1000 (default: none)
 #   --no-docker       skip Docker install/verify (checks everything else)
 #
@@ -36,7 +36,9 @@
 set -euo pipefail
 
 # ----- config + defaults ----------------------------------------------------
-PROJ_ROOT="${PROJ_ROOT:-/projects}"
+# /opt/<name> is the FHS home for unpackaged application software; a box with
+# clones under the pre-rename /projects keeps them (adopted below).
+PROJ_ROOT="${PROJ_ROOT:-}"
 DATA_ROOT="${DATA_ROOT:-}"
 PORTS=""
 CHECK_ONLY=0
@@ -62,6 +64,18 @@ ok()   { printf '%s  ok%s %s\n' "$G" "$N" "$*"; }
 warn() { printf '%swarn%s %s\n' "$Y" "$N" "$*" >&2; }
 die()  { printf '%sERROR%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
 todo() { printf '%s todo%s %s\n' "$Y" "$N" "$*"; }
+
+# Pre-rename adoption: /projects was the default before 2026-08-05. Keep using
+# it when it already holds a suite clone and the new default does not exist,
+# so a flagless re-run never splits an install across two roots.
+if [ -z "$PROJ_ROOT" ]; then
+    if [ ! -d /opt/canvas-suite ] && { [ -d /projects/pingcanvas/.git ] || [ -d /projects/crosscanvas/.git ]; }; then
+        PROJ_ROOT=/projects
+        warn "adopting existing projects root /projects (the pre-rename default) - pass --projects to relocate"
+    else
+        PROJ_ROOT=/opt/canvas-suite
+    fi
+fi
 
 # In --check mode nothing may change. Route every mutation through this so a
 # missed branch is impossible rather than merely unlikely.

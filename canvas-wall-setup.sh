@@ -27,8 +27,8 @@
 #                     from the results, so the wall is live immediately
 #                     (e.g. --scan 192.168.1.0/24,10.50.1.0/24)
 #   --no-tls          skip self-signed cert generation (HTTP only)
-#   --data DIR        shared data root                (default: /srv/noc-data)
-#   --projects DIR    where the repos are cloned      (default: /projects)
+#   --data DIR        shared data root                (default: /srv/canvas-suite)
+#   --projects DIR    where the repos are cloned      (default: /opt/canvas-suite)
 #   --update          git-pull existing clones instead of leaving them as-is
 #
 # Env vars BOX_IP / DATA_ROOT / PROJ_ROOT / TZ override the same values.
@@ -36,8 +36,12 @@
 set -euo pipefail
 
 # ----- config + defaults ----------------------------------------------------
-DATA_ROOT="${DATA_ROOT:-/srv/noc-data}"
-PROJ_ROOT="${PROJ_ROOT:-/projects}"
+# FHS homes: served/persistent data under /srv/<name>, unpackaged application
+# checkouts under /opt/<name>. Defaults resolve AFTER argument parsing so the
+# pre-rename install paths (/srv/noc-data + /projects) can be adopted on
+# re-runs - see below.
+DATA_ROOT="${DATA_ROOT:-}"
+PROJ_ROOT="${PROJ_ROOT:-}"
 BOX_IP="${BOX_IP:-}"
 BOARD=""
 GEN_TLS=1
@@ -67,6 +71,32 @@ ok()   { printf '%s  ok%s %s\n' "$G" "$N" "$*"; }
 warn() { printf '%swarn%s %s\n' "$Y" "$N" "$*" >&2; }
 die()  { printf '%sERROR%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
 
+# ----- default paths + pre-rename adoption ------------------------------------
+# The defaults were /srv/noc-data and /projects before 2026-08-05. A flagless
+# re-run on such a box must keep using them: switching to the new defaults
+# would build an empty data root and repoint every container away from the
+# operator's history - the worst possible reading of "safe to re-run". Adopt
+# only when the operator expressed no preference (no flag, no env), the new
+# default does not exist yet, and the old path is recognizably ours
+# (/projects is a generic name; a suite clone inside it is the tell -
+# assert_safe_target still vets both either way).
+if [ -z "$DATA_ROOT" ]; then
+    if [ ! -d /srv/canvas-suite ] && [ -d /srv/noc-data ]; then
+        DATA_ROOT=/srv/noc-data
+        warn "adopting existing data root /srv/noc-data (the pre-rename default) - pass --data to relocate"
+    else
+        DATA_ROOT=/srv/canvas-suite
+    fi
+fi
+if [ -z "$PROJ_ROOT" ]; then
+    if [ ! -d /opt/canvas-suite ] && { [ -d /projects/pingcanvas/.git ] || [ -d /projects/crosscanvas/.git ]; }; then
+        PROJ_ROOT=/projects
+        warn "adopting existing projects root /projects (the pre-rename default) - pass --projects to relocate"
+    else
+        PROJ_ROOT=/opt/canvas-suite
+    fi
+fi
+
 # Read a value back out of an override file on a re-run. This script writes
 # `- KEY=value`, but a hand-edited file may quote the value or use the YAML
 # mapping form, and a commented-out old line must never win - the previous
@@ -86,7 +116,7 @@ read_secret() {
 }
 
 # Refuse to point the installer at a directory that is not ours. Both roots get
-# `sudo chown -R`, so a one-token typo (--data /srv instead of /srv/noc-data)
+# `sudo chown -R`, so a one-token typo (--data /srv instead of /srv/canvas-suite)
 # would silently re-own every other service's data on the box, as root.
 assert_safe_target() {
     local path="$1" label="$2"; shift 2
@@ -98,7 +128,7 @@ assert_safe_target() {
     [ -d "$path" ] && resolved="$(cd "$path" && pwd -P)"
     local sys
     for sys in / /bin /boot /dev /etc /home /lib /lib64 /media /mnt /opt /proc /root /run /sbin /srv /sys /tmp /usr /var; do
-        [ "$resolved" = "$sys" ] && die "refusing to use $resolved as the $label: it is a system directory and this script chowns its target recursively. Use a dedicated path such as /srv/noc-data."
+        [ "$resolved" = "$sys" ] && die "refusing to use $resolved as the $label: it is a system directory and this script chowns its target recursively. Use a dedicated path such as /srv/canvas-suite."
     done
     # sudo -n so this can never sit at a password prompt; a directory we cannot
     # list reads as empty and falls through, as it did before this guard.
@@ -194,11 +224,15 @@ HOST_FQDN="$(hostname -f 2>/dev/null || hostname)"
 
 # ----- 3. directories --------------------------------------------------------
 assert_safe_target "$DATA_ROOT" "data root" \
-    certs board.xcanvas alertcanvas status.json status-all.json
+    certs board.xcanvas alertcanvas status.json status-all.json .private
 assert_safe_target "$PROJ_ROOT" "projects root" crosscanvas pingcanvas alertcanvas
 
 say "Creating shared data root at $DATA_ROOT (owned by container uid $APP_UID)"
-sudo mkdir -p "$DATA_ROOT/certs" "$DATA_ROOT/alertcanvas/certs"
+# .private is the wall split's home (PingCanvas DEPLOY.md): boards placed
+# there are SOURCES the web tier never serves (nginx 404s dot-paths under
+# /data), the poller walls them automatically, and only the stripped .wall
+# pair is served - so the kiosk URL never carries more than the picture shows.
+sudo mkdir -p "$DATA_ROOT/certs" "$DATA_ROOT/alertcanvas/certs" "$DATA_ROOT/.private"
 sudo chown -R "$APP_UID:$APP_UID" "$DATA_ROOT"
 # The shared root stays world-readable - the kiosk's nginx runs as another uid
 # and serves boards out of it. AlertCanvas's subdir holds only its database.
@@ -223,16 +257,19 @@ clone_one pingcanvas  "$ORG/PingCanvas.git"
 clone_one alertcanvas "$ORG/AlertCanvas.git"
 
 # ----- 5. optional board seed ------------------------------------------------
+# Seeds land in .private (never served); the poller publishes the sanitized
+# .wall pair into the served root within one cycle. Either location counts as
+# "a board exists" on a re-run - a pre-rename install keeps its root board.
 if [ -n "$BOARD" ]; then
     [ -f "$BOARD" ] || die "board file not found: $BOARD"
     # Never clobber a live board on a re-run - it may have been refined since
     # install. Delete it to replace.
-    if [ -f "$DATA_ROOT/board.xcanvas" ]; then
-        warn "board.xcanvas already exists - keeping it (delete it first to replace)"
+    if [ -f "$DATA_ROOT/board.xcanvas" ] || [ -f "$DATA_ROOT/.private/board.xcanvas" ]; then
+        warn "a board already exists - keeping it (delete it first to replace)"
     else
-        say "Seeding board -> $DATA_ROOT/board.xcanvas"
-        sudo cp "$BOARD" "$DATA_ROOT/board.xcanvas"
-        sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/board.xcanvas"
+        say "Seeding board -> $DATA_ROOT/.private/board.xcanvas"
+        sudo cp "$BOARD" "$DATA_ROOT/.private/board.xcanvas"
+        sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/.private/board.xcanvas"
     fi
 fi
 
@@ -324,11 +361,11 @@ BUILDER
     # errexit that killed the whole run right here - silently, with the friendly
     # "scan produced no usable board" branch below left unreachable.
     COUNT="$(grep -o '"IP-Address"' "$TMP/board.xcanvas" 2>/dev/null | wc -l | tr -d ' ' || true)"
-    if [ -f "$DATA_ROOT/board.xcanvas" ]; then
-        warn "board.xcanvas already exists - keeping it; the scan result was not applied (delete the board first to reseed)"
+    if [ -f "$DATA_ROOT/board.xcanvas" ] || [ -f "$DATA_ROOT/.private/board.xcanvas" ]; then
+        warn "a board already exists - keeping it; the scan result was not applied (delete the board first to reseed)"
     elif [ -s "$TMP/board.xcanvas" ] && [ "${COUNT:-0}" -gt 0 ]; then
-        sudo cp "$TMP/board.xcanvas" "$DATA_ROOT/board.xcanvas"
-        sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/board.xcanvas"
+        sudo cp "$TMP/board.xcanvas" "$DATA_ROOT/.private/board.xcanvas"
+        sudo chown "$APP_UID:$APP_UID" "$DATA_ROOT/.private/board.xcanvas"
         ok "Seeded board from scan: $COUNT device(s) (VMs auto-iconed; edit in CrossCanvas to arrange)"
     else
         warn "Scan produced no usable board (nothing responded, or nmap needs root on this segment) - draw one in the editor instead."
@@ -368,11 +405,15 @@ services:
     environment:
       - TZ=$TZ
       - STATUS_FILE=off
+      # The private board moves the poller's combined status-all.json into
+      # .private (hostnames must not resurface at the served root), so the
+      # ping-alert feed points there. A value saved in Settings still wins.
+      - PING_STATUS_FILE=/status/.private/status-all.json
       - ALERTCANVAS_SECRET=$AC_SECRET
 YAML
 
 # ALERTCANVAS_SECRET decrypts the stored SMTP password and ntfy token, and the
-# default umask would leave this file world-readable inside a 0755 /projects.
+# default umask would leave this file world-readable inside a 0755 projects root.
 for f in "$PROJ_ROOT"/*/docker-compose.override.yml; do
     [ -f "$f" ] && chmod 600 "$f"
 done
@@ -430,7 +471,7 @@ WEBPORT="8080"; [ "$GEN_TLS" = 1 ] && WEBPORT="8443"
 echo
 printf '%s============ PingCanvas + AlertCanvas pair is up ============%s\n' "$B" "$N"
 echo "  CrossCanvas editor   $S://$BOX_IP:$WEBPORT/index.html"
-echo "  PingCanvas kiosk     $S://$BOX_IP:$WEBPORT/kiosk.html?board=data/board.xcanvas&status=data/status.json"
+echo "  PingCanvas kiosk     $S://$BOX_IP:$WEBPORT/kiosk.html?board=data/board.wall.xcanvas&status=data/status.wall.json"
 echo "  AlertCanvas          $S://$BOX_IP:9162  - set the admin password promptly"
 if [ "$GEN_TLS" = 1 ]; then
     echo "  (The editor and kiosk share one web server: HTTPS on 8443, plain HTTP"
@@ -442,11 +483,27 @@ echo "  First visit: draw a board in the editor - or skip the drawing entirely:"
 echo "  run a ping scan (nmap -sn <your-subnet>), paste the output into the"
 echo "  editor's File -> Import Inventory paste box, and the subnet lands as"
 echo "  devices with IP-Addresses already set. Save the board as"
-echo "  $DATA_ROOT/board.xcanvas and the kiosk comes alive. Then open"
-echo "  AlertCanvas -> Watching, check the devices that should page you (your"
-echo "  ISPs, an internet canary), give them notification labels, and add an"
-echo "  email/ntfy/syslog channel in Settings."
+echo "  $DATA_ROOT/.private/board.xcanvas and the kiosk comes alive (the"
+echo "  poller publishes a sanitized .wall copy - hidden fields like addresses"
+echo "  never reach the served URL). Then open AlertCanvas -> Watching, check"
+echo "  the devices that should page you (your ISPs, an internet canary), give"
+echo "  them notification labels, and add an email/ntfy/syslog channel in"
+echo "  Settings."
 echo
+# Loud advisory, no auto-move: moving the file would break every kiosk URL
+# already pointing at it, and that is the operator's call to schedule.
+LEGACY_BOARDS="$(sudo find "$DATA_ROOT" -maxdepth 1 \( -name '*.xcanvas' -o -name '*.netdraw' \) ! -name '*.wall.*' -printf '%f ' 2>/dev/null || true)"
+if [ -n "$LEGACY_BOARDS" ]; then
+    printf '  %sBOARDS AT THE SERVED ROOT: %s%s\n' "$Y" "$LEGACY_BOARDS" "$N"
+    echo "  These predate the private-by-default layout: they still work at their old"
+    echo "  URLs but are served IN FULL (hostnames, addresses, custom fields). To"
+    echo "  adopt the private layout per board:"
+    echo "      sudo mv $DATA_ROOT/<name>.xcanvas $DATA_ROOT/.private/"
+    echo "      sudo rm $DATA_ROOT/status*.json        # stale, still served, IP-keyed"
+    echo "  then point its kiosk URL at data/<name>.wall.xcanvas + the .wall.json"
+    echo "  status (the poller writes both within one poll cycle)."
+    echo
+fi
 if [ "$DC" = "sudo docker" ]; then
     printf '  %sNOTE:%s plain "docker" commands will say "permission denied" until you log\n' "$Y" "$N"
     echo "  out and back in once (docker group membership activates on next login;"

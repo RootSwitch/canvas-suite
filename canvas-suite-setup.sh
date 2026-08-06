@@ -28,8 +28,8 @@
 #                     from the results, so the wall is live immediately
 #                     (e.g. --scan 192.168.1.0/24,10.50.1.0/24)
 #   --no-tls          skip self-signed cert generation (HTTP only)
-#   --data DIR        shared data root                (default: /srv/noc-data)
-#   --projects DIR    where the repos are cloned      (default: /projects)
+#   --data DIR        shared data root                (default: /srv/canvas-suite)
+#   --projects DIR    where the repos are cloned      (default: /opt/canvas-suite)
 #   --update          git-pull existing clones instead of leaving them as-is
 #
 # Env vars BOX_IP / DATA_ROOT / PROJ_ROOT / TZ override the same values.
@@ -37,8 +37,12 @@
 set -euo pipefail
 
 # ----- config + defaults ----------------------------------------------------
-DATA_ROOT="${DATA_ROOT:-/srv/noc-data}"
-PROJ_ROOT="${PROJ_ROOT:-/projects}"
+# FHS homes: served/persistent data under /srv/<name>, unpackaged application
+# checkouts under /opt/<name>. Defaults resolve AFTER argument parsing so the
+# pre-rename install paths (/srv/noc-data + /projects) can be adopted on
+# re-runs - see below.
+DATA_ROOT="${DATA_ROOT:-}"
+PROJ_ROOT="${PROJ_ROOT:-}"
 BOX_IP="${BOX_IP:-}"
 BOARD=""
 GEN_TLS=1
@@ -67,6 +71,32 @@ say()  { printf '%s==>%s %s\n' "$B" "$N" "$*"; }
 ok()   { printf '%s  ok%s %s\n' "$G" "$N" "$*"; }
 warn() { printf '%swarn%s %s\n' "$Y" "$N" "$*" >&2; }
 die()  { printf '%sERROR%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
+
+# ----- default paths + pre-rename adoption ------------------------------------
+# The defaults were /srv/noc-data and /projects before 2026-08-05. A flagless
+# re-run on such a box must keep using them: switching to the new defaults
+# would build an empty data root and repoint every container away from the
+# operator's history - the worst possible reading of "safe to re-run". Adopt
+# only when the operator expressed no preference (no flag, no env), the new
+# default does not exist yet, and the old path is recognizably ours
+# (/projects is a generic name; a suite clone inside it is the tell -
+# assert_safe_target still vets both either way).
+if [ -z "$DATA_ROOT" ]; then
+    if [ ! -d /srv/canvas-suite ] && [ -d /srv/noc-data ]; then
+        DATA_ROOT=/srv/noc-data
+        warn "adopting existing data root /srv/noc-data (the pre-rename default) - pass --data to relocate"
+    else
+        DATA_ROOT=/srv/canvas-suite
+    fi
+fi
+if [ -z "$PROJ_ROOT" ]; then
+    if [ ! -d /opt/canvas-suite ] && { [ -d /projects/pingcanvas/.git ] || [ -d /projects/crosscanvas/.git ]; }; then
+        PROJ_ROOT=/projects
+        warn "adopting existing projects root /projects (the pre-rename default) - pass --projects to relocate"
+    else
+        PROJ_ROOT=/opt/canvas-suite
+    fi
+fi
 
 # Poll a URL until it answers. A first install has just built six images and
 # started six containers, and a single probe a couple of seconds later almost
@@ -110,7 +140,7 @@ read_secret() {
 }
 
 # Refuse to point the installer at a directory that is not ours. Both roots get
-# `sudo chown -R`, so a one-token typo (--data /srv instead of /srv/noc-data)
+# `sudo chown -R`, so a one-token typo (--data /srv instead of /srv/canvas-suite)
 # would silently re-own every other service's data on the box, as root, with no
 # way back. Markers let a genuine re-run over an existing install pass silently.
 assert_safe_target() {
@@ -123,7 +153,7 @@ assert_safe_target() {
     [ -d "$path" ] && resolved="$(cd "$path" && pwd -P)"
     local sys
     for sys in / /bin /boot /dev /etc /home /lib /lib64 /media /mnt /opt /proc /root /run /sbin /srv /sys /tmp /usr /var; do
-        [ "$resolved" = "$sys" ] && die "refusing to use $resolved as the $label: it is a system directory and this script chowns its target recursively. Use a dedicated path such as /srv/noc-data."
+        [ "$resolved" = "$sys" ] && die "refusing to use $resolved as the $label: it is a system directory and this script chowns its target recursively. Use a dedicated path such as /srv/canvas-suite."
     done
     # Existing content that looks like nothing we ever wrote is almost always a
     # mistyped flag rather than an install worth adopting.
@@ -515,7 +545,7 @@ YAML
 # These files hold every secret in the deployment: the SSO key (which mints a
 # valid session for ANY username on every sibling), both credential-encryption
 # keys, and the portal password. The default umask leaves them world-readable
-# inside a 0755 /projects, so any local account could read them and own the
+# inside a 0755 projects root, so any local account could read them and own the
 # whole suite without ever touching the network.
 #
 # The umask above the writes is what actually closes this; the chmod below is

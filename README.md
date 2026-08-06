@@ -74,7 +74,7 @@ Useful flags (both scripts take `--help`):
   self-signed cert, `--update` to pull newer app versions on a re-run.
 
 What the suite script sets up, in brief: installs Docker if needed, clones
-the six repos into `/projects`, creates `/srv/noc-data` for all persistent
+the six repos into `/opt/canvas-suite`, creates `/srv/canvas-suite` for all persistent
 data, writes compose overrides pointing everything at it, mints secrets
 (single sign-on + at-rest credential encryption - **on by default**, which
 manual installs do not get), generates TLS certs, and builds and starts
@@ -86,7 +86,7 @@ guidance, VM sizing, Raspberry Pi notes, Windows options, and the
 first-run password checklist live there.
 
 **Back up your secrets:** they live in the `docker-compose.override.yml`
-files under `/projects`. A database restored onto a redeploy only decrypts
+files under `/opt/canvas-suite`. A database restored onto a redeploy only decrypts
 with the same secrets it was written under - keep those files with your
 data backups.
 
@@ -132,7 +132,7 @@ while. If you are installing Ubuntu Server itself, its installer wants
 - **Kernel warnings at Docker start on Rocky 9** (`nft_compat`,
   `ip_set`, `br_netfilter`) - expected deprecation notices, harmless.
 - **Updating later**: re-run the script with `--update`, or per app:
-  `cd /projects/<app> && git pull && docker compose up -d --build`
+  `cd /opt/canvas-suite/<app> && git pull && docker compose up -d --build`
   (PingCanvas also wants `bash docker/build-web.sh` first; CrossCanvas
   is a build input with no container - just pull it).
 

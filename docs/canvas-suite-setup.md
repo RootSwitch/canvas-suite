@@ -13,8 +13,8 @@ the manual doc treats those as optional steps).
 - Installs git, curl, openssl, and Docker (via the official convenience script,
   so you get modern compose v2).
 - Auto-detects the box's LAN IP and timezone.
-- Creates `/srv/noc-data` (all history, owned by the container uid 1000) and
-  `/projects` (the six git checkouts, owned by you).
+- Creates `/srv/canvas-suite` (all history, owned by the container uid 1000) and
+  `/opt/canvas-suite` (the six git checkouts, owned by you).
 - Clones CrossCanvas, PingCanvas, SNMPCanvas, SyslogCanvas, AlertCanvas, and
   LaunchCanvas.
 - Writes the `docker-compose.override.yml` files that point every container at
@@ -46,8 +46,8 @@ next login picks up docker-group membership for plain `docker`.
 | `--board FILE` | none | seed this `.xcanvas` as the kiosk board (never overwrites an existing board) |
 | `--scan CIDR[,CIDR...]` | none | ping-scan these subnets (`nmap -sn`) and seed a board from every host that answered, so the wall is live from minute one |
 | `--no-tls` | off | skip cert generation, HTTP only |
-| `--data DIR` | `/srv/noc-data` | shared data root |
-| `--projects DIR` | `/projects` | where the repos are cloned |
+| `--data DIR` | `/srv/canvas-suite` | shared data root |
+| `--projects DIR` | `/opt/canvas-suite` | where the repos are cloned |
 | `--update` | off | `git pull` existing clones instead of leaving them as-is |
 
 Any of `BOX_IP`, `DATA_ROOT`, `PROJ_ROOT`, `TZ` can be set as env vars instead.
@@ -74,7 +74,7 @@ or certs. Use `--update` when you want it to also pull the latest code.
   password manager. It is the only thing that decrypts your SNMP credentials.
 - No board yet? Draw one in the editor, export it, and upload it from the
   LaunchCanvas Launch page (or save it as
-  `/srv/noc-data/.private/board.xcanvas` by hand). The kiosk shows a
+  `/srv/canvas-suite/.private/board.xcanvas` by hand). The kiosk shows a
   getting-started page until then.
 - Boards live under `.private` on purpose: the web tier never serves that
   path, the poller writes a sanitized `.wall` copy (hidden device fields
@@ -93,5 +93,5 @@ or certs. Use `--update` when you want it to also pull the latest code.
 ./canvas-suite-setup.sh --update      # pulls each repo, rebuilds, restarts
 ```
 
-Your `/srv/noc-data` and the override files are untracked, so updates never
+Your `/srv/canvas-suite` and the override files are untracked, so updates never
 touch them.
